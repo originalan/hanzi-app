@@ -28,14 +28,94 @@ function updateActiveTab() {
 
 function showToast(msg) {
   const el = document.createElement("div");
-  el.className = "toast";
+  el.className = "toast auto-fade";
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 2000);
 }
 
+let activeUndoToast = null;
+
+function showUndoToast(label, onUndo) {
+  if (activeUndoToast) {
+    clearTimeout(activeUndoToast.timer);
+    activeUndoToast.el.remove();
+    activeUndoToast = null;
+  }
+
+  const el = document.createElement("div");
+  el.className = "toast toast-undo";
+  el.innerHTML = `<span></span><button class="undo-btn">Undo</button>`;
+  el.querySelector("span").textContent = label;
+  document.body.appendChild(el);
+
+  const timer = setTimeout(() => {
+    el.remove();
+    activeUndoToast = null;
+  }, 4000);
+
+  el.querySelector(".undo-btn").addEventListener("click", () => {
+    clearTimeout(timer);
+    el.remove();
+    activeUndoToast = null;
+    onUndo();
+  });
+
+  activeUndoToast = { el, timer };
+}
+
+// ---------- Theme ----------
+
+const THEME_KEY = "hanzi-theme";
+
+const THEME_ICONS = {
+  dark: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/>',
+  light:
+    '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
+};
+
+function currentTheme() {
+  const explicit = document.documentElement.getAttribute("data-theme");
+  if (explicit) return explicit;
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function applyThemeIcon() {
+  const icon = document.getElementById("theme-icon");
+  if (!icon) return;
+  icon.innerHTML = THEME_ICONS[currentTheme()];
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved) document.documentElement.setAttribute("data-theme", saved);
+  applyThemeIcon();
+}
+
+function toggleTheme() {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem(THEME_KEY, next);
+  applyThemeIcon();
+}
+
+document.getElementById("theme-toggle").addEventListener("click", toggleTheme);
+
+// ---------- Badge ----------
+
+function updateBadge() {
+  if (!("setAppBadge" in navigator)) return;
+  const due = Store.dueCards().length;
+  if (due > 0) {
+    navigator.setAppBadge(due).catch(() => {});
+  } else {
+    navigator.clearAppBadge().catch(() => {});
+  }
+}
+
 function render() {
   updateActiveTab();
+  updateBadge();
   if (state.view === "home") return renderHome();
   if (state.view === "review") return renderReview();
   if (state.view === "browse") return renderBrowse();
@@ -93,7 +173,8 @@ function renderReview() {
   appEl.innerHTML = `
     <div class="review-wrap">
       <div class="progress">${remaining} card${remaining === 1 ? "" : "s"} remaining</div>
-      <div class="card" id="flip-card">
+      ${session.revealed ? '<div class="swipe-legend"><span>&larr; Again</span><span>Easy &uarr;</span><span>Hard &darr;</span><span>Good &rarr;</span></div>' : ""}
+      <div class="card${session.revealed ? " revealed" : ""}" id="flip-card">
         <div class="hanzi">${escapeHtml(card.hanzi)}</div>
         <div class="pinyin">${session.revealed ? escapeHtml(card.pinyin) : ""}</div>
         <div class="definition">${session.revealed ? escapeHtml(card.definition) : ""}</div>
@@ -103,21 +184,18 @@ function renderReview() {
     </div>
   `;
 
+  const cardEl = document.getElementById("flip-card");
+
   if (!session.revealed) {
-    document.getElementById("flip-card").addEventListener("click", () => {
+    cardEl.addEventListener("click", () => {
       session.revealed = true;
       render();
     });
   } else {
     appEl.querySelectorAll(".grade-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const { requeue } = Store.grade(card.id, btn.dataset.grade);
-        session.queue.shift();
-        if (requeue) session.queue.push(card);
-        session.revealed = false;
-        render();
-      });
+      btn.addEventListener("click", () => applyGrade(card, session, btn.dataset.grade));
     });
+    attachSwipe(cardEl, card, session);
   }
 }
 
@@ -130,6 +208,98 @@ function gradeRowHtml() {
       <button class="grade-btn easy" data-grade="easy">Easy<small>longer</small></button>
     </div>
   `;
+}
+
+const GRADE_LABELS = { again: "Again", hard: "Hard", good: "Good", easy: "Easy" };
+
+function applyGrade(card, session, grade) {
+  const prevState = {
+    ease: card.ease,
+    interval: card.interval,
+    reps: card.reps,
+    lapses: card.lapses,
+    dueDate: card.dueDate,
+  };
+  const queueIdsBefore = session.queue.map((c) => c.id);
+
+  const { requeue } = Store.grade(card.id, grade);
+  session.queue.shift();
+  if (requeue) session.queue.push(card);
+  session.revealed = false;
+
+  showUndoToast(`Graded ${card.hanzi} as ${GRADE_LABELS[grade]}`, () => {
+    Store.update(card.id, prevState);
+    if (state.session) {
+      const all = Store.all();
+      state.session.queue = queueIdsBefore.map((id) => all.find((c) => c.id === id)).filter(Boolean);
+      state.session.revealed = true;
+      render();
+    }
+  });
+
+  render();
+}
+
+// Direction -> grade for swipe gestures: left=again, right=good, up=easy, down=hard.
+function swipeGrade(dx, dy, threshold) {
+  const adx = Math.abs(dx);
+  const ady = Math.abs(dy);
+  if (Math.max(adx, ady) < threshold) return null;
+  if (adx > ady) return dx > 0 ? "good" : "again";
+  return dy > 0 ? "hard" : "easy";
+}
+
+function attachSwipe(cardEl, card, session) {
+  const ACTIVATE_THRESHOLD = 28;
+  const RELEASE_THRESHOLD = 90;
+  const FLY_DISTANCE = 500;
+  let startX = 0;
+  let startY = 0;
+  let dx = 0;
+  let dy = 0;
+  let dragging = false;
+
+  function onPointerDown(e) {
+    dragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    cardEl.style.transition = "none";
+    cardEl.setPointerCapture(e.pointerId);
+  }
+
+  function onPointerMove(e) {
+    if (!dragging) return;
+    dx = e.clientX - startX;
+    dy = e.clientY - startY;
+    cardEl.style.transform = `translate(${dx}px, ${dy}px) rotate(${dx / 18}deg)`;
+    const grade = swipeGrade(dx, dy, ACTIVATE_THRESHOLD);
+    cardEl.style.borderColor = grade ? `var(--${grade})` : "transparent";
+  }
+
+  function onPointerUp() {
+    if (!dragging) return;
+    dragging = false;
+    cardEl.style.transition = "transform 0.2s ease, border-color 0.2s ease";
+
+    const grade = swipeGrade(dx, dy, RELEASE_THRESHOLD);
+    if (grade) {
+      const flyX = grade === "again" ? -FLY_DISTANCE : grade === "good" ? FLY_DISTANCE : dx;
+      const flyY = grade === "easy" ? -FLY_DISTANCE : grade === "hard" ? FLY_DISTANCE : dy;
+      cardEl.style.transform = `translate(${flyX}px, ${flyY}px) rotate(${flyX / 18}deg)`;
+      cardEl.style.opacity = "0";
+      setTimeout(() => applyGrade(card, session, grade), 160);
+    } else {
+      cardEl.style.transform = "";
+      cardEl.style.borderColor = "transparent";
+    }
+    dx = 0;
+    dy = 0;
+  }
+
+  cardEl.addEventListener("pointerdown", onPointerDown);
+  cardEl.addEventListener("pointermove", onPointerMove);
+  cardEl.addEventListener("pointerup", onPointerUp);
+  cardEl.addEventListener("pointercancel", onPointerUp);
 }
 
 // ---------- Browse ----------
@@ -255,6 +425,7 @@ function escapeHtml(str) {
 
 // ---------- Boot ----------
 
+initTheme();
 Store.load();
 render();
 
