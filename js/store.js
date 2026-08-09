@@ -71,6 +71,14 @@ const Store = {
     return [...set].sort();
   },
 
+  // Like levels(), but appends "Untagged" if any card has no level set —
+  // used by the review category filter so every card is reachable.
+  categories() {
+    const levels = this.levels();
+    const hasUntagged = this.load().some((c) => !c.level);
+    return hasUntagged ? [...levels, "Untagged"] : levels;
+  },
+
   add(hanzi, pinyin, definition, level = "") {
     const card = {
       id: uid(),

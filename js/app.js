@@ -7,6 +7,8 @@ let state = {
   view: "home",
   session: null, // { queue: [card,...], index, revealed }
   browseFilter: "all",
+  reviewLevels: null, // null = all categories; else a Set of selected categories
+  reviewOrder: "shuffle", // "shuffle" | "category"
 };
 
 function setView(view) {
@@ -124,26 +126,122 @@ function render() {
   if (state.view === "stats") return renderStats();
 }
 
+// ---------- Review preferences (category filter + ordering) ----------
+
+const REVIEW_PREFS_KEY = "hanzi-review-prefs-v1";
+
+function cardCategory(card) {
+  return card.level || "Untagged";
+}
+
+function loadReviewPrefs() {
+  try {
+    const raw = localStorage.getItem(REVIEW_PREFS_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    state.reviewLevels = Array.isArray(parsed.levels) ? new Set(parsed.levels) : null;
+    state.reviewOrder = parsed.order === "category" ? "category" : "shuffle";
+  } catch (e) {
+    // ignore malformed prefs, keep defaults
+  }
+}
+
+function saveReviewPrefs() {
+  localStorage.setItem(
+    REVIEW_PREFS_KEY,
+    JSON.stringify({
+      levels: state.reviewLevels ? [...state.reviewLevels] : null,
+      order: state.reviewOrder,
+    })
+  );
+}
+
+function toggleReviewLevel(level) {
+  if (level === "ALL") {
+    state.reviewLevels = null;
+  } else if (state.reviewLevels === null) {
+    state.reviewLevels = new Set([level]);
+  } else {
+    const next = new Set(state.reviewLevels);
+    if (next.has(level)) next.delete(level);
+    else next.add(level);
+    state.reviewLevels = next.size === 0 ? null : next;
+  }
+  saveReviewPrefs();
+  render();
+}
+
+function setReviewOrder(order) {
+  state.reviewOrder = order;
+  saveReviewPrefs();
+  render();
+}
+
+function filteredDueCards() {
+  const due = Store.dueCards();
+  if (!state.reviewLevels) return due;
+  return due.filter((c) => state.reviewLevels.has(cardCategory(c)));
+}
+
+function buildReviewQueue() {
+  const due = filteredDueCards();
+  if (state.reviewOrder !== "category") return shuffle(due);
+
+  const groups = {};
+  due.forEach((c) => {
+    const cat = cardCategory(c);
+    (groups[cat] = groups[cat] || []).push(c);
+  });
+  const orderedCats = Store.categories().filter((cat) => groups[cat]);
+  return orderedCats.flatMap((cat) => shuffle(groups[cat]));
+}
+
 // ---------- Home ----------
 
 function renderHome() {
   const all = Store.all();
   const due = Store.dueCards();
+  const filteredDue = filteredDueCards();
+  const categories = Store.categories();
+
+  const chips = ["ALL", ...categories]
+    .map((cat) => {
+      const label = cat === "ALL" ? "All" : cat;
+      const active = cat === "ALL" ? state.reviewLevels === null : !!state.reviewLevels && state.reviewLevels.has(cat);
+      const count = cat === "ALL" ? due.length : due.filter((c) => cardCategory(c) === cat).length;
+      return `<button class="chip${active ? " active" : ""}" data-cat="${escapeHtml(cat)}">${escapeHtml(label)} (${count})</button>`;
+    })
+    .join("");
 
   appEl.innerHTML = `
     <div class="stat-grid">
       <div class="stat-card"><div class="num">${due.length}</div><div class="label">Due now</div></div>
       <div class="stat-card"><div class="num">${all.length}</div><div class="label">Total cards</div></div>
     </div>
-    <button class="big-btn" id="start-review" ${due.length === 0 ? "disabled" : ""}>
-      ${due.length === 0 ? "Nothing due — nice work" : `Review ${due.length} card${due.length === 1 ? "" : "s"}`}
+
+    <h2>Study focus</h2>
+    <div class="chip-row">${chips}</div>
+    <div class="order-toggle">
+      <button class="seg${state.reviewOrder === "shuffle" ? " active" : ""}" data-order="shuffle">Shuffled</button>
+      <button class="seg${state.reviewOrder === "category" ? " active" : ""}" data-order="category">By category</button>
+    </div>
+
+    <button class="big-btn" id="start-review" ${filteredDue.length === 0 ? "disabled" : ""}>
+      ${filteredDue.length === 0 ? "Nothing due in this selection" : `Review ${filteredDue.length} card${filteredDue.length === 1 ? "" : "s"}`}
     </button>
     <button class="big-btn secondary" id="go-browse">Browse all cards</button>
     <button class="big-btn secondary" id="go-add">Add a character</button>
   `;
 
+  document.querySelectorAll(".chip").forEach((chip) => {
+    chip.addEventListener("click", () => toggleReviewLevel(chip.dataset.cat));
+  });
+  document.querySelectorAll(".order-toggle .seg").forEach((btn) => {
+    btn.addEventListener("click", () => setReviewOrder(btn.dataset.order));
+  });
+
   document.getElementById("start-review").addEventListener("click", () => {
-    if (due.length === 0) return;
+    if (filteredDue.length === 0) return;
     setView("review");
   });
   document.getElementById("go-browse").addEventListener("click", () => setView("browse"));
@@ -154,7 +252,7 @@ function renderHome() {
 
 function renderReview() {
   if (!state.session) {
-    const queue = shuffle(Store.dueCards());
+    const queue = buildReviewQueue();
     if (queue.length === 0) {
       appEl.innerHTML = `<div class="empty-state">No cards due for review.<br/>Come back later, or add more characters.</div>`;
       return;
@@ -674,6 +772,7 @@ function escapeHtml(str) {
 // ---------- Boot ----------
 
 initTheme();
+loadReviewPrefs();
 Store.load();
 render();
 

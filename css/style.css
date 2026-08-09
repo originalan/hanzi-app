@@ -340,6 +340,33 @@ body {
   color: white;
 }
 
+.order-toggle {
+  display: flex;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.order-toggle .seg {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.order-toggle .seg.active {
+  background: var(--accent);
+  color: white;
+}
+
+.order-toggle .seg:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
 .data-actions {
   margin-top: 20px;
   padding-top: 16px;
