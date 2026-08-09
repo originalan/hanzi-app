@@ -6,6 +6,7 @@ const tabbarEl = document.getElementById("tabbar");
 let state = {
   view: "home",
   session: null, // { queue: [card,...], index, revealed }
+  browseFilter: "all",
 };
 
 function setView(view) {
@@ -120,6 +121,7 @@ function render() {
   if (state.view === "review") return renderReview();
   if (state.view === "browse") return renderBrowse();
   if (state.view === "add") return renderAdd();
+  if (state.view === "stats") return renderStats();
 }
 
 // ---------- Home ----------
@@ -229,6 +231,7 @@ function applyGrade(card, session, grade) {
 
   showUndoToast(`Graded ${card.hanzi} as ${GRADE_LABELS[grade]}`, () => {
     Store.update(card.id, prevState);
+    Store.popHistory();
     if (state.session) {
       const all = Store.all();
       state.session.queue = queueIdsBefore.map((id) => all.find((c) => c.id === id)).filter(Boolean);
@@ -306,26 +309,50 @@ function attachSwipe(cardEl, card, session) {
 
 function renderBrowse() {
   const all = [...Store.all()].sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  const levels = Store.levels();
+
+  const chips = ["all", ...levels]
+    .map((lvl) => {
+      const label = lvl === "all" ? "All" : lvl;
+      const active = state.browseFilter === lvl ? " active" : "";
+      return `<button class="chip${active}" data-level="${escapeHtml(lvl)}">${escapeHtml(label)}</button>`;
+    })
+    .join("");
 
   appEl.innerHTML = `
     <h2>All cards</h2>
     <input class="search-input" id="search" placeholder="Search hanzi, pinyin, or definition..." />
+    <div class="chip-row">${chips}</div>
     <div id="list"></div>
+    <div class="data-actions">
+      <button class="big-btn secondary small" id="export-json">Export JSON (full backup)</button>
+      <button class="big-btn secondary small" id="export-csv">Export CSV</button>
+      <button class="big-btn secondary small" id="import-btn">Import JSON or CSV</button>
+      <input type="file" id="import-file" accept=".json,.csv,text/csv,application/json" style="display:none" />
+    </div>
   `;
 
   const listEl = document.getElementById("list");
   const searchEl = document.getElementById("search");
 
+  document.querySelectorAll(".chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      state.browseFilter = chip.dataset.level;
+      render();
+    });
+  });
+
   function renderList(filter) {
     const f = (filter || "").trim().toLowerCase();
-    const filtered = f
-      ? all.filter(
-          (c) =>
-            c.hanzi.includes(f) ||
-            c.pinyin.toLowerCase().includes(f) ||
-            c.definition.toLowerCase().includes(f)
-        )
-      : all;
+    let filtered = state.browseFilter === "all" ? all : all.filter((c) => c.level === state.browseFilter);
+    if (f) {
+      filtered = filtered.filter(
+        (c) =>
+          c.hanzi.includes(f) ||
+          c.pinyin.toLowerCase().includes(f) ||
+          c.definition.toLowerCase().includes(f)
+      );
+    }
 
     if (filtered.length === 0) {
       listEl.innerHTML = `<div class="empty-state">No matches.</div>`;
@@ -365,11 +392,127 @@ function renderBrowse() {
 
   searchEl.addEventListener("input", () => renderList(searchEl.value));
   renderList("");
+
+  document.getElementById("export-json").addEventListener("click", exportJson);
+  document.getElementById("export-csv").addEventListener("click", exportCsv);
+  const fileInput = document.getElementById("import-file");
+  document.getElementById("import-btn").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (file) handleImportFile(file);
+    fileInput.value = "";
+  });
+}
+
+// ---------- Import / Export ----------
+
+function downloadBlob(content, mime, filename) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportJson() {
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadBlob(JSON.stringify(Store.all(), null, 2), "application/json", `hanzi-backup-${stamp}.json`);
+  showToast("Exported JSON backup");
+}
+
+function csvEscape(field) {
+  const s = String(field ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function exportCsv() {
+  const rows = [["hanzi", "pinyin", "definition", "level"]];
+  Store.all().forEach((c) => rows.push([c.hanzi, c.pinyin, c.definition, c.level || ""]));
+  const csv = rows.map((r) => r.map(csvEscape).join(",")).join("\n");
+  const stamp = new Date().toISOString().slice(0, 10);
+  downloadBlob(csv, "text/csv", `hanzi-cards-${stamp}.csv`);
+  showToast("Exported CSV");
+}
+
+// Minimal RFC4180-ish CSV parser: handles quoted fields, escaped quotes,
+// and commas/newlines inside quotes. Good enough for spreadsheet exports.
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += ch;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.some((f) => f.trim() !== ""));
+}
+
+function handleImportFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      let entries;
+      if (file.name.toLowerCase().endsWith(".json") || file.type === "application/json") {
+        const parsed = JSON.parse(reader.result);
+        entries = Array.isArray(parsed) ? parsed : [parsed];
+      } else {
+        const rows = parseCsv(reader.result);
+        let dataRows = rows;
+        if (rows.length && /hanzi/i.test(rows[0][0] || "")) dataRows = rows.slice(1);
+        entries = dataRows.map(([hanzi, pinyin, definition, level]) => ({
+          hanzi: (hanzi || "").trim(),
+          pinyin: (pinyin || "").trim(),
+          definition: (definition || "").trim(),
+          level: (level || "").trim(),
+        }));
+      }
+      const { added, updated } = Store.importCards(entries);
+      showToast(`Imported: ${added} added, ${updated} updated`);
+      render();
+    } catch (err) {
+      showToast("Import failed: invalid file");
+    }
+  };
+  reader.readAsText(file);
 }
 
 // ---------- Add ----------
 
 function renderAdd() {
+  const levels = Store.levels();
+
   appEl.innerHTML = `
     <h2>Add a character</h2>
     <div class="form-row">
@@ -384,6 +527,13 @@ function renderAdd() {
       <label for="f-def">Definition</label>
       <input class="text-input" id="f-def" placeholder="e.g. cat" />
     </div>
+    <div class="form-row">
+      <label for="f-level">Level / tag (optional)</label>
+      <input class="text-input" id="f-level" list="level-options" placeholder="e.g. HSK2+" />
+      <datalist id="level-options">
+        ${levels.map((l) => `<option value="${escapeHtml(l)}"></option>`).join("")}
+      </datalist>
+    </div>
     <button class="big-btn" id="save-card">Add card</button>
   `;
 
@@ -391,19 +541,117 @@ function renderAdd() {
     const hanzi = document.getElementById("f-hanzi").value.trim();
     const pinyin = document.getElementById("f-pinyin").value.trim();
     const definition = document.getElementById("f-def").value.trim();
+    const level = document.getElementById("f-level").value.trim();
 
     if (!hanzi || !pinyin || !definition) {
       showToast("Fill in all three fields");
       return;
     }
 
-    Store.add(hanzi, pinyin, definition);
+    Store.add(hanzi, pinyin, definition, level);
     showToast(`Added ${hanzi}`);
     document.getElementById("f-hanzi").value = "";
     document.getElementById("f-pinyin").value = "";
     document.getElementById("f-def").value = "";
     document.getElementById("f-hanzi").focus();
   });
+}
+
+// ---------- Stats ----------
+
+function reviewCountsByDate() {
+  const counts = {};
+  Store.history().forEach((h) => {
+    counts[h.date] = (counts[h.date] || 0) + 1;
+  });
+  return counts;
+}
+
+function currentStreak() {
+  const counts = reviewCountsByDate();
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+  if (!counts[cursor.toISOString().slice(0, 10)]) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  let streak = 0;
+  while (counts[cursor.toISOString().slice(0, 10)]) {
+    streak++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function computeAccuracy() {
+  const history = Store.history();
+  if (history.length === 0) return null;
+  const retained = history.filter((h) => h.grade !== "again").length;
+  return Math.round((retained / history.length) * 100);
+}
+
+function buildHeatmapCells(weeks) {
+  const counts = reviewCountsByDate();
+  const totalDays = weeks * 7;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(today);
+  start.setDate(start.getDate() - (totalDays - 1));
+
+  const cells = [];
+  const padStart = start.getDay();
+  for (let i = 0; i < padStart; i++) cells.push(null);
+  for (let i = 0; i < totalDays; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    cells.push({ date: key, count: counts[key] || 0 });
+  }
+  return cells;
+}
+
+function heatmapTier(count) {
+  if (count === 0) return 0;
+  if (count <= 2) return 1;
+  if (count <= 5) return 2;
+  return 3;
+}
+
+function renderStats() {
+  const history = Store.history();
+  const streak = currentStreak();
+  const accuracy = computeAccuracy();
+  const cells = buildHeatmapCells(12);
+
+  const heatmapHtml = cells
+    .map((c) =>
+      c === null
+        ? `<div class="hm-cell hm-empty"></div>`
+        : `<div class="hm-cell hm-tier-${heatmapTier(c.count)}" title="${c.date}: ${c.count} review${c.count === 1 ? "" : "s"}"></div>`
+    )
+    .join("");
+
+  appEl.innerHTML = `
+    <h2>Stats</h2>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="num">${streak}</div><div class="label">Day streak</div></div>
+      <div class="stat-card"><div class="num">${accuracy === null ? "—" : accuracy + "%"}</div><div class="label">Retention</div></div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="num">${history.length}</div><div class="label">Total reviews</div></div>
+      <div class="stat-card"><div class="num">${Store.all().length}</div><div class="label">Cards in deck</div></div>
+    </div>
+    <h2>Last 12 weeks</h2>
+    <div class="heatmap">${heatmapHtml}</div>
+    <div class="heatmap-legend">
+      <span>Less</span>
+      <div class="hm-cell hm-tier-0"></div>
+      <div class="hm-cell hm-tier-1"></div>
+      <div class="hm-cell hm-tier-2"></div>
+      <div class="hm-cell hm-tier-3"></div>
+      <span>More</span>
+    </div>
+    ${history.length === 0 ? '<div class="empty-state">Review some cards to start building stats.</div>' : ""}
+  `;
 }
 
 // ---------- Utils ----------

@@ -317,6 +317,41 @@ body {
   margin-bottom: 12px;
 }
 
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-family: inherit;
+}
+
+.chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.data-actions {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.big-btn.small {
+  padding: 12px;
+  font-size: 0.9rem;
+  margin-bottom: 8px;
+}
+
 .card-list-item {
   display: flex;
   align-items: center;
@@ -430,4 +465,44 @@ h2 {
   margin-top: 0;
   font-size: 1.1rem;
   color: var(--text);
+}
+
+h2 + h2 {
+  margin-top: 24px;
+}
+
+/* Stats */
+.heatmap {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: 12px;
+  gap: 3px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.hm-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--surface-2);
+}
+
+.hm-empty {
+  background: transparent;
+}
+
+.hm-tier-0 { background: var(--surface-2); }
+.hm-tier-1 { background: var(--good); opacity: 0.35; }
+.hm-tier-2 { background: var(--good); opacity: 0.65; }
+.hm-tier-3 { background: var(--good); opacity: 1; }
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  margin-top: 8px;
 }
