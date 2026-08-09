@@ -627,7 +627,7 @@ function renderAdd() {
     </div>
     <div class="form-row">
       <label for="f-level">Level / tag (optional)</label>
-      <input class="text-input" id="f-level" list="level-options" placeholder="e.g. HSK2+" />
+      <input class="text-input" id="f-level" list="level-options" placeholder="e.g. HSK4" />
       <datalist id="level-options">
         ${levels.map((l) => `<option value="${escapeHtml(l)}"></option>`).join("")}
       </datalist>
