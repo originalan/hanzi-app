@@ -16,6 +16,7 @@ const Store = {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       this._cards = JSON.parse(raw);
+      this._mergeNewSeedWords();
     } else {
       this._cards = SEED_HANZI.map(([hanzi, pinyin, definition, level]) => ({
         id: uid(),
@@ -28,6 +29,29 @@ const Store = {
       this.save();
     }
     return this._cards;
+  },
+
+  // SEED_HANZI can grow between app versions. Existing decks (already in
+  // localStorage) only get seeded once, so on every load we add any seed
+  // words not already present by hanzi text — existing cards' SRS state
+  // is left untouched.
+  _mergeNewSeedWords() {
+    const existing = new Set(this._cards.map((c) => c.hanzi));
+    let added = false;
+    SEED_HANZI.forEach(([hanzi, pinyin, definition, level]) => {
+      if (existing.has(hanzi)) return;
+      this._cards.push({
+        id: uid(),
+        hanzi,
+        pinyin,
+        definition,
+        level: level || "",
+        ...SRS.newCardState(),
+      });
+      existing.add(hanzi);
+      added = true;
+    });
+    if (added) this.save();
   },
 
   save() {
