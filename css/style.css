@@ -322,6 +322,56 @@ body {
   height: 14px;
 }
 
+.dish-image {
+  width: 100%;
+  max-width: 360px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.dish-image img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+}
+
+.dish-image-credit {
+  padding: 4px 10px;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.region-map {
+  width: 100%;
+  max-width: 200px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 10px;
+  text-align: center;
+}
+
+.region-map-svg svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.region-map-svg .province {
+  fill: var(--surface-2);
+  stroke: var(--border);
+  stroke-width: 0.5;
+}
+
+.region-map-label {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
 .sentence-block {
   width: 100%;
   max-width: 360px;

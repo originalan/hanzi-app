@@ -17,6 +17,8 @@ function seedToCard(seed) {
     sentenceZh: seed.sZh || "",
     sentencePinyin: seed.sPy || "",
     sentenceEn: seed.sEn || "",
+    region: seed.region || "",
+    img: seed.img || "",
     ...SRS.newCardState(),
   };
 }
@@ -38,13 +40,14 @@ const Store = {
     return this._cards;
   },
 
-  // SEED_HANZI can grow (or get relabeled) between app versions. Existing
-  // decks (already in localStorage) only get seeded once, so on every load
-  // we (1) add any seed words not already present by hanzi text, and
-  // (2) sync each existing card's level tag to whatever the seed currently
-  // says — e.g. a card tagged the old "HSK2+" gets corrected to "HSK2" /
-  // "HSK3" / etc. without touching its SRS state. Only the level field is
-  // ever overwritten this way.
+  // SEED_HANZI can grow (or get relabeled/enriched) between app versions.
+  // Existing decks (already in localStorage) only get seeded once, so on
+  // every load we (1) add any seed words not already present by hanzi
+  // text, and (2) sync each existing card's seed-derived metadata (level,
+  // example sentence, region, image) to whatever the seed currently says — e.g. a
+  // card tagged the old "HSK2+" gets corrected to "HSK2", or a dish that
+  // gets a region tag added later picks it up automatically. SRS state
+  // (ease/interval/reps/lapses/dueDate) is never touched by this.
   _mergeNewSeedWords() {
     const seedByHanzi = new Map(SEED_HANZI.map((s) => [s.h, s]));
     const existingHanzi = new Set(this._cards.map((c) => c.hanzi));
@@ -59,8 +62,23 @@ const Store = {
 
     this._cards.forEach((card) => {
       const seed = seedByHanzi.get(card.hanzi);
-      if (seed && seed.lvl && card.level !== seed.lvl) {
+      if (!seed) return;
+      if (seed.lvl && card.level !== seed.lvl) {
         card.level = seed.lvl;
+        changed = true;
+      }
+      if ((seed.sZh || "") !== (card.sentenceZh || "")) {
+        card.sentenceZh = seed.sZh || "";
+        card.sentencePinyin = seed.sPy || "";
+        card.sentenceEn = seed.sEn || "";
+        changed = true;
+      }
+      if ((seed.region || "") !== (card.region || "")) {
+        card.region = seed.region || "";
+        changed = true;
+      }
+      if ((seed.img || "") !== (card.img || "")) {
+        card.img = seed.img || "";
         changed = true;
       }
     });

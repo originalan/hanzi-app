@@ -62,6 +62,47 @@ function speak(text) {
   window.speechSynthesis.speak(utter);
 }
 
+// ---------- Region map ----------
+// Highlights a province on a blank map of China for cuisine cards tagged
+// with a region of origin. Map source: "China blank province map.svg" by
+// Newfraferz87 (Wikimedia Commons, public domain), with per-province path
+// IDs like "pSC" already built in for exactly this kind of highlighting.
+
+const REGION_NAMES = {
+  BJ: "Beijing", SC: "Sichuan", GD: "Guangdong", SH: "Shanghai", HN: "Hunan",
+  XJ: "Xinjiang", GS: "Gansu", TW: "Taiwan", YN: "Yunnan", SN: "Shaanxi",
+  HB: "Hubei", GX: "Guangxi", HA: "Henan", FJ: "Fujian", ZJ: "Zhejiang", CQ: "Chongqing",
+};
+
+let chinaMapSvgText = "";
+
+function loadChinaMap() {
+  fetch("icons/china-map.svg")
+    .then((r) => r.text())
+    .then((text) => {
+      chinaMapSvgText = text;
+      render(); // pick up the map on whatever's currently on screen, if relevant
+    })
+    .catch(() => {});
+}
+
+function regionMapHtml(regionCode) {
+  if (!regionCode || !chinaMapSvgText) return "";
+  const idAttr = `id="p${regionCode}"`;
+  if (!chinaMapSvgText.includes(idAttr)) return "";
+  const highlighted = chinaMapSvgText.replace(
+    idAttr,
+    `${idAttr} style="fill:var(--accent);stroke:var(--accent-2);stroke-width:1.2"`
+  );
+  const name = REGION_NAMES[regionCode] || regionCode;
+  return `
+    <div class="region-map">
+      <div class="region-map-svg">${highlighted}</div>
+      <div class="region-map-label">${escapeHtml(name)}</div>
+    </div>
+  `;
+}
+
 function setView(view) {
   state.view = view;
   state.session = null;
@@ -332,6 +373,8 @@ function renderReview() {
         ${session.revealed ? "" : '<div class="hint">Tap to reveal</div>'}
       </div>
       ${session.revealed ? `<button class="speak-btn" id="speak-word">${speakerIconSvg()}Listen</button>` : ""}
+      ${session.revealed ? dishImageHtml(card) : ""}
+      ${session.revealed ? regionMapHtml(card.region) : ""}
       ${session.revealed ? sentenceBlockHtml(card) : ""}
       ${session.revealed ? gradeRowHtml() : ""}
     </div>
@@ -356,6 +399,16 @@ function renderReview() {
       speakSentenceBtn.addEventListener("click", () => speak(card.sentenceZh));
     }
   }
+}
+
+function dishImageHtml(card) {
+  if (!card.img) return "";
+  return `
+    <div class="dish-image">
+      <img src="icons/dishes/${card.img}.jpg" alt="${escapeHtml(card.hanzi)}" loading="lazy" />
+      <div class="dish-image-credit">Photo: Wikimedia Commons</div>
+    </div>
+  `;
 }
 
 function sentenceBlockHtml(card) {
@@ -848,6 +901,7 @@ initTheme();
 loadReviewPrefs();
 Store.load();
 render();
+loadChinaMap();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
