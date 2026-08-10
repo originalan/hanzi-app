@@ -38,20 +38,34 @@ const Store = {
     return this._cards;
   },
 
-  // SEED_HANZI can grow between app versions. Existing decks (already in
-  // localStorage) only get seeded once, so on every load we add any seed
-  // words not already present by hanzi text — existing cards' SRS state
-  // is left untouched.
+  // SEED_HANZI can grow (or get relabeled) between app versions. Existing
+  // decks (already in localStorage) only get seeded once, so on every load
+  // we (1) add any seed words not already present by hanzi text, and
+  // (2) sync each existing card's level tag to whatever the seed currently
+  // says — e.g. a card tagged the old "HSK2+" gets corrected to "HSK2" /
+  // "HSK3" / etc. without touching its SRS state. Only the level field is
+  // ever overwritten this way.
   _mergeNewSeedWords() {
-    const existing = new Set(this._cards.map((c) => c.hanzi));
-    let added = false;
+    const seedByHanzi = new Map(SEED_HANZI.map((s) => [s.h, s]));
+    const existingHanzi = new Set(this._cards.map((c) => c.hanzi));
+    let changed = false;
+
     SEED_HANZI.forEach((seed) => {
-      if (existing.has(seed.h)) return;
+      if (existingHanzi.has(seed.h)) return;
       this._cards.push(seedToCard(seed));
-      existing.add(seed.h);
-      added = true;
+      existingHanzi.add(seed.h);
+      changed = true;
     });
-    if (added) this.save();
+
+    this._cards.forEach((card) => {
+      const seed = seedByHanzi.get(card.hanzi);
+      if (seed && seed.lvl && card.level !== seed.lvl) {
+        card.level = seed.lvl;
+        changed = true;
+      }
+    });
+
+    if (changed) this.save();
   },
 
   save() {
