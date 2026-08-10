@@ -11,6 +11,57 @@ let state = {
   reviewOrder: "shuffle", // "shuffle" | "category"
 };
 
+// ---------- Tone-colored pinyin ----------
+
+const TONE_MARKS = {
+  ā: 1, á: 2, ǎ: 3, à: 4,
+  ē: 1, é: 2, ě: 3, è: 4,
+  ī: 1, í: 2, ǐ: 3, ì: 4,
+  ō: 1, ó: 2, ǒ: 3, ò: 4,
+  ū: 1, ú: 2, ǔ: 3, ù: 4,
+  ǖ: 1, ǘ: 2, ǚ: 3, ǜ: 4,
+  ń: 2, ň: 3, ǹ: 4,
+};
+
+function syllableTone(syllable) {
+  for (const ch of syllable) {
+    const tone = TONE_MARKS[ch.toLowerCase()];
+    if (tone) return tone;
+  }
+  return 5; // neutral tone
+}
+
+// Renders space-separated pinyin ("nǐ hǎo") as HTML with each syllable
+// colored by its tone (1-4, or 5 for neutral). Safe against arbitrary
+// input text since each syllable is escaped individually.
+function tonedPinyinHtml(pinyinStr) {
+  if (!pinyinStr) return "";
+  return pinyinStr
+    .split(/(\s+)/)
+    .map((chunk) => {
+      if (/^\s+$/.test(chunk) || chunk === "") return chunk;
+      return `<span class="tone-${syllableTone(chunk)}">${escapeHtml(chunk)}</span>`;
+    })
+    .join("");
+}
+
+// ---------- Audio pronunciation ----------
+
+function speakerIconSvg() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+}
+
+function speak(text) {
+  if (!text || !("speechSynthesis" in window)) return;
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "zh-CN";
+  const voices = window.speechSynthesis.getVoices();
+  const zhVoice = voices.find((v) => v.lang === "zh-CN") || voices.find((v) => v.lang && v.lang.startsWith("zh"));
+  if (zhVoice) utter.voice = zhVoice;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utter);
+}
+
 function setView(view) {
   state.view = view;
   state.session = null;
@@ -276,10 +327,12 @@ function renderReview() {
       ${session.revealed ? '<div class="swipe-legend"><span>&larr; Again</span><span>Easy &uarr;</span><span>Hard &darr;</span><span>Good &rarr;</span></div>' : ""}
       <div class="card${session.revealed ? " revealed" : ""}" id="flip-card">
         <div class="hanzi">${escapeHtml(card.hanzi)}</div>
-        <div class="pinyin">${session.revealed ? escapeHtml(card.pinyin) : ""}</div>
+        <div class="pinyin">${session.revealed ? tonedPinyinHtml(card.pinyin) : ""}</div>
         <div class="definition">${session.revealed ? escapeHtml(card.definition) : ""}</div>
         ${session.revealed ? "" : '<div class="hint">Tap to reveal</div>'}
       </div>
+      ${session.revealed ? `<button class="speak-btn" id="speak-word">${speakerIconSvg()}Listen</button>` : ""}
+      ${session.revealed ? sentenceBlockHtml(card) : ""}
       ${session.revealed ? gradeRowHtml() : ""}
     </div>
   `;
@@ -296,7 +349,27 @@ function renderReview() {
       btn.addEventListener("click", () => applyGrade(card, session, btn.dataset.grade));
     });
     attachSwipe(cardEl, card, session);
+
+    document.getElementById("speak-word").addEventListener("click", () => speak(card.hanzi));
+    const speakSentenceBtn = document.getElementById("speak-sentence");
+    if (speakSentenceBtn) {
+      speakSentenceBtn.addEventListener("click", () => speak(card.sentenceZh));
+    }
   }
+}
+
+function sentenceBlockHtml(card) {
+  if (!card.sentenceZh) return "";
+  return `
+    <div class="sentence-block">
+      <div class="sentence-zh">
+        <span>${escapeHtml(card.sentenceZh)}</span>
+        <button class="speak-btn small" id="speak-sentence">${speakerIconSvg()}</button>
+      </div>
+      <div class="sentence-pinyin">${tonedPinyinHtml(card.sentencePinyin)}</div>
+      <div class="sentence-en">${escapeHtml(card.sentenceEn)}</div>
+    </div>
+  `;
 }
 
 function gradeRowHtml() {
@@ -467,7 +540,7 @@ function renderBrowse() {
           <div class="card-list-item" data-id="${c.id}">
             <div class="ci-hanzi">${escapeHtml(c.hanzi)}</div>
             <div class="ci-mid">
-              <div class="ci-pinyin">${escapeHtml(c.pinyin)}</div>
+              <div class="ci-pinyin">${tonedPinyinHtml(c.pinyin)}</div>
               <div class="ci-def">${escapeHtml(c.definition)}</div>
             </div>
             <div class="ci-due ${dueNow ? "due-now" : ""}">${dueLabel}</div>

@@ -7,6 +7,20 @@ function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
+function seedToCard(seed) {
+  return {
+    id: uid(),
+    hanzi: seed.h,
+    pinyin: seed.p,
+    definition: seed.d,
+    level: seed.lvl || "",
+    sentenceZh: seed.sZh || "",
+    sentencePinyin: seed.sPy || "",
+    sentenceEn: seed.sEn || "",
+    ...SRS.newCardState(),
+  };
+}
+
 const Store = {
   _cards: null,
   _history: null,
@@ -18,14 +32,7 @@ const Store = {
       this._cards = JSON.parse(raw);
       this._mergeNewSeedWords();
     } else {
-      this._cards = SEED_HANZI.map(([hanzi, pinyin, definition, level]) => ({
-        id: uid(),
-        hanzi,
-        pinyin,
-        definition,
-        level: level || "",
-        ...SRS.newCardState(),
-      }));
+      this._cards = SEED_HANZI.map(seedToCard);
       this.save();
     }
     return this._cards;
@@ -38,17 +45,10 @@ const Store = {
   _mergeNewSeedWords() {
     const existing = new Set(this._cards.map((c) => c.hanzi));
     let added = false;
-    SEED_HANZI.forEach(([hanzi, pinyin, definition, level]) => {
-      if (existing.has(hanzi)) return;
-      this._cards.push({
-        id: uid(),
-        hanzi,
-        pinyin,
-        definition,
-        level: level || "",
-        ...SRS.newCardState(),
-      });
-      existing.add(hanzi);
+    SEED_HANZI.forEach((seed) => {
+      if (existing.has(seed.h)) return;
+      this._cards.push(seedToCard(seed));
+      existing.add(seed.h);
       added = true;
     });
     if (added) this.save();
@@ -132,6 +132,9 @@ const Store = {
           pinyin: e.pinyin,
           definition: e.definition,
           level: e.level || existing.level || "",
+          sentenceZh: e.sentenceZh || existing.sentenceZh || "",
+          sentencePinyin: e.sentencePinyin || existing.sentencePinyin || "",
+          sentenceEn: e.sentenceEn || existing.sentenceEn || "",
           ease: e.ease ?? existing.ease,
           interval: e.interval ?? existing.interval,
           reps: e.reps ?? existing.reps,
@@ -146,6 +149,9 @@ const Store = {
           pinyin: e.pinyin,
           definition: e.definition,
           level: e.level || "",
+          sentenceZh: e.sentenceZh || "",
+          sentencePinyin: e.sentencePinyin || "",
+          sentenceEn: e.sentenceEn || "",
           ease: e.ease ?? 2.5,
           interval: e.interval ?? 0,
           reps: e.reps ?? 0,
