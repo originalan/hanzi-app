@@ -33,13 +33,17 @@ function syllableTone(syllable) {
 
 // Renders space-separated pinyin ("nǐ hǎo") as HTML with each syllable
 // colored by its tone (1-4, or 5 for neutral). Safe against arbitrary
-// input text since each syllable is escaped individually.
+// input text since each syllable is escaped individually. Tokens that are
+// pure punctuation (quote marks, ellipses — sentence pinyin sometimes
+// tokenizes these on their own) are left uncolored rather than tinted as
+// a fake "neutral tone", since they aren't a syllable at all.
 function tonedPinyinHtml(pinyinStr) {
   if (!pinyinStr) return "";
   return pinyinStr
     .split(/(\s+)/)
     .map((chunk) => {
       if (/^\s+$/.test(chunk) || chunk === "") return chunk;
+      if (!/[a-zA-ZüÜāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜńňǹ]/.test(chunk)) return escapeHtml(chunk);
       return `<span class="tone-${syllableTone(chunk)}">${escapeHtml(chunk)}</span>`;
     })
     .join("");

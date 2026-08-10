@@ -630,7 +630,7 @@ const SEED_HANZI = [
   { h: "一边", p: "yī biān", d: "one side; either side", lvl: "HSK3", sZh: "一边站着。", sPy: "yì biān zhàn zhe。", sEn: "Stand aside." },
   { h: "一定", p: "yī dìng", d: "surely; certainly", lvl: "HSK3", sZh: "他一定会成功。", sPy: "tā yí dìng huì chéng gōng。", sEn: "He is sure to succeed." },
   { h: "一共", p: "yī gòng", d: "altogether", lvl: "HSK3", sZh: "一共有十多个学生。", sPy: "yí gòng yǒu shí duō gè xué shēng。", sEn: "There are about ten to twenty students in total." },
-  { h: "一会儿", p: "yī huì r", d: "a moment; a while", lvl: "HSK3", sZh: "一会儿见！", sPy: "yí huì er jiàn！", sEn: "See you soon!" },
+  { h: "一会儿", p: "yí huìr", d: "a moment; a while", lvl: "HSK3", sZh: "一会儿见！", sPy: "yí huì er jiàn！", sEn: "See you soon!" },
   { h: "一直", p: "yī zhí", d: "always; continuously", lvl: "HSK3", sZh: "我一直想见你。", sPy: "wǒ yì zhí xiǎng jiàn nǐ。", sEn: "I always wanted to see you." },
   { h: "以后", p: "yǐ hòu", d: "after; later", lvl: "HSK3", sZh: "以后再讲。", sPy: "yǐ hòu zài jiǎng。", sEn: "Talk to you later." },
   { h: "以前", p: "yǐ qián", d: "before; formerly", lvl: "HSK3", sZh: "我以前在山里。", sPy: "wǒ yǐ qián zài shān lǐ。", sEn: "I was in the mountains." },
