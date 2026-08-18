@@ -622,7 +622,7 @@ function renderBrowse() {
     <div class="chip-row">${chips}</div>
     <div id="list"></div>
     <div class="data-actions">
-      <button class="big-btn secondary small" id="export-json">Export JSON (full backup)</button>
+      <button class="big-btn secondary small" id="export-json">Back up progress (JSON)</button>
       <button class="big-btn secondary small" id="export-csv">Export CSV</button>
       <button class="big-btn secondary small" id="import-btn">Import JSON or CSV</button>
       <input type="file" id="import-file" accept=".json,.csv,text/csv,application/json" style="display:none" />
@@ -745,9 +745,32 @@ function daysSinceLastExport() {
   return Number.isFinite(t) ? (Date.now() - t) / 86400000 : Infinity;
 }
 
-function exportJson() {
+// On platforms with the Web Share API (notably iOS Safari), this opens
+// the native Share Sheet so the backup can go straight to iCloud Drive,
+// AirDrop, another app, etc. in one tap — no account, no typing, and no
+// relying on how the browser happens to handle a raw blob download.
+// Falls back to a plain file download wherever Share isn't available.
+async function exportJson() {
   const stamp = new Date().toISOString().slice(0, 10);
-  downloadBlob(JSON.stringify(Store.all(), null, 2), "application/json", `hanzi-backup-${stamp}.json`);
+  const filename = `hanzi-backup-${stamp}.json`;
+  const json = JSON.stringify(Store.all(), null, 2);
+
+  if (navigator.share && navigator.canShare) {
+    try {
+      const file = new File([json], filename, { type: "application/json" });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: "Hanzi SRS backup" });
+        recordExport();
+        showToast("Backup shared");
+        return;
+      }
+    } catch (err) {
+      if (err && err.name === "AbortError") return; // user cancelled the share sheet
+      // any other failure: fall through to a plain download
+    }
+  }
+
+  downloadBlob(json, "application/json", filename);
   recordExport();
   showToast("Exported JSON backup");
 }
@@ -967,7 +990,7 @@ function renderStats() {
       showBackupReminder
         ? `<div class="backup-reminder">
             <div>${Number.isFinite(daysSinceBackup) ? `You haven't backed up in ${Math.floor(daysSinceBackup)} days.` : "You've never exported a backup."} This app only stores data on this device — export a JSON backup to avoid losing your progress.</div>
-            <button class="big-btn small" id="backup-now">Export JSON backup</button>
+            <button class="big-btn small" id="backup-now">Back up now</button>
           </div>`
         : ""
     }
@@ -1023,6 +1046,10 @@ window.addEventListener("hanzi-storage-error", () => {
   showToast("Couldn't save — storage is full or unavailable");
 });
 
+window.addEventListener("hanzi-storage-recovered", () => {
+  showToast("Recovered your data from an automatic backup copy");
+});
+
 // Supports manifest.json home-screen shortcuts (e.g. "?view=review") that
 // should land directly on a tab instead of always opening on Home.
 function applyStartView() {
@@ -1040,6 +1067,13 @@ Store.load();
 applyStartView();
 render();
 loadChinaMap();
+
+// Best-effort, silent request that the browser not evict this site's
+// storage under space pressure. No prompt, no user action, can't fail
+// loudly — just improves the odds on browsers that support it.
+if (navigator.storage && navigator.storage.persist) {
+  navigator.storage.persist().catch(() => {});
+}
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

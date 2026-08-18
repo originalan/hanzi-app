@@ -164,3 +164,57 @@ test("grade() logs history and popHistory() undoes exactly the last entry", () =
   Store.popHistory();
   assert.equal(Store.history().length, 0);
 });
+
+test("save() rotates the previous valid state into a snapshot key before overwriting", () => {
+  const { Store, rawStore } = loadHanziModules({ seedHanzi: [] });
+  Store.load();
+  Store.add("一", "yī", "one");
+  const afterFirstAdd = rawStore["hanzi-cards-v1"];
+
+  Store.add("二", "èr", "two");
+
+  assert.equal(rawStore["hanzi-cards-v1-snapshot"], afterFirstAdd, "snapshot should hold the state from before the latest write");
+});
+
+test("load() recovers from the snapshot when the primary card data is corrupted, and heals it", () => {
+  const { Store, SRS, rawStore, dispatchedEvents } = loadHanziModules({ seedHanzi: [] });
+  Store.load();
+  const card = Store.add("三", "sān", "three").card;
+  const goodSnapshot = rawStore["hanzi-cards-v1"];
+  Store.add("四", "sì", "four"); // this write's snapshot is `goodSnapshot`
+  rawStore["hanzi-cards-v1"] = "{not valid json, simulating an interrupted write";
+  Store._cards = null;
+
+  const cards = Store.load();
+
+  assert.equal(cards.length, 1, "should recover the one-card state, not the two-card or empty state");
+  assert.equal(cards[0].hanzi, "三");
+  assert.ok(safeParseArrayIsValid(rawStore["hanzi-cards-v1"]), "primary key should be healed back to valid JSON");
+  assert.ok(
+    dispatchedEvents.some((e) => e.type === "hanzi-storage-recovered" && e.detail.key === "hanzi-cards-v1"),
+    "should broadcast a recovery event so the UI can tell the user"
+  );
+
+  function safeParseArrayIsValid(raw) {
+    try {
+      return Array.isArray(JSON.parse(raw));
+    } catch {
+      return false;
+    }
+  }
+});
+
+test("history survives the same corruption-recovery path as cards", () => {
+  const { Store, rawStore } = loadHanziModules({ seedHanzi: [] });
+  Store.load();
+  const card = Store.add("五", "wǔ", "five").card;
+  Store.grade(card.id, "good"); // this write's snapshot becomes the (empty) pre-history state
+  Store.grade(card.id, "good"); // this write's snapshot becomes the 1-entry state
+
+  rawStore["hanzi-history-v1"] = "not json at all";
+  Store._history = null;
+
+  const history = Store.loadHistory();
+  assert.equal(history.length, 1, "should recover the one-entry history, not lose it entirely");
+  assert.equal(history[0].grade, "good");
+});

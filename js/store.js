@@ -1,7 +1,9 @@
 // Persistence layer backed by localStorage.
 
 const STORAGE_KEY = "hanzi-cards-v1";
+const STORAGE_SNAPSHOT_KEY = "hanzi-cards-v1-snapshot";
 const HISTORY_KEY = "hanzi-history-v1";
+const HISTORY_SNAPSHOT_KEY = "hanzi-history-v1-snapshot";
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -32,6 +34,42 @@ function safeParseArray(raw, fallback) {
     return Array.isArray(parsed) ? parsed : fallback;
   } catch (err) {
     return fallback;
+  }
+}
+
+// Everything here is still a single browser storage bucket, so it can't
+// protect against losing the device itself — but it can protect against
+// a single bad write. Before overwriting `key`, its previous value (if
+// it was valid) is copied into `snapshotKey`, so the snapshot always
+// lags one write behind. If a later write to `key` gets interrupted
+// (app killed mid-write, disk error) and comes back corrupted, the
+// snapshot still holds the last state we know parsed cleanly.
+function persistWithSnapshot(key, snapshotKey, value) {
+  const previousRaw = localStorage.getItem(key);
+  if (previousRaw !== null && safeParseArray(previousRaw, null) !== null) {
+    try {
+      localStorage.setItem(snapshotKey, previousRaw);
+    } catch (err) {
+      // best-effort only -- the primary write below is what matters
+    }
+  }
+  return persist(key, value);
+}
+
+// Reads `key`, falling back to `snapshotKey` if the primary value is
+// missing or corrupted. `recovered` is true only when the snapshot
+// actually had to be used, so callers can tell the user and heal the
+// primary key back to a valid state.
+function loadWithRecovery(key, snapshotKey) {
+  const primary = safeParseArray(localStorage.getItem(key), null);
+  if (primary) return { data: primary, recovered: false };
+  const snapshot = safeParseArray(localStorage.getItem(snapshotKey), null);
+  return { data: snapshot, recovered: snapshot !== null };
+}
+
+function notifyRecovered(key) {
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new CustomEvent("hanzi-storage-recovered", { detail: { key } }));
   }
 }
 
@@ -85,11 +123,14 @@ const Store = {
 
   load() {
     if (this._cards) return this._cards;
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const parsed = safeParseArray(raw, null);
-    if (parsed) {
-      this._cards = parsed;
+    const { data, recovered } = loadWithRecovery(STORAGE_KEY, STORAGE_SNAPSHOT_KEY);
+    if (data) {
+      this._cards = data;
       this._mergeNewSeedWords();
+      if (recovered) {
+        this.save(); // heal the primary key with the recovered data
+        notifyRecovered(STORAGE_KEY);
+      }
     } else {
       this._cards = SEED_HANZI.map(seedToCard);
       this.save();
@@ -158,7 +199,7 @@ const Store = {
   },
 
   save() {
-    return persist(STORAGE_KEY, this._cards);
+    return persistWithSnapshot(STORAGE_KEY, STORAGE_SNAPSHOT_KEY, this._cards);
   },
 
   all() {
@@ -286,13 +327,17 @@ const Store = {
 
   loadHistory() {
     if (this._history) return this._history;
-    const raw = localStorage.getItem(HISTORY_KEY);
-    this._history = safeParseArray(raw, []);
+    const { data, recovered } = loadWithRecovery(HISTORY_KEY, HISTORY_SNAPSHOT_KEY);
+    this._history = data || [];
+    if (recovered) {
+      this.saveHistory();
+      notifyRecovered(HISTORY_KEY);
+    }
     return this._history;
   },
 
   saveHistory() {
-    return persist(HISTORY_KEY, this._history);
+    return persistWithSnapshot(HISTORY_KEY, HISTORY_SNAPSHOT_KEY, this._history);
   },
 
   history() {
