@@ -148,6 +148,18 @@ body {
   z-index: 10;
 }
 
+/* This is a mobile-first layout, but it also runs in a plain desktop
+   browser tab (as a PWA or not). Past ~600px, cap the app shell to a
+   phone-width column instead of letting text and lists stretch edge to
+   edge across a wide window. */
+@media (min-width: 600px) {
+  .topbar, #app, .tabbar {
+    max-width: 480px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
 .tab {
   flex: 1;
   padding: 12px 4px;
@@ -212,6 +224,54 @@ body {
 .big-btn.secondary {
   background: var(--surface-2);
   color: var(--text);
+}
+
+.new-limit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+.new-limit-row select {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  padding: 6px 10px;
+}
+
+.new-limit-note {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  text-align: center;
+  margin: -4px 0 12px;
+}
+
+.backup-reminder {
+  background: var(--surface);
+  border: 1px solid var(--hard);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.backup-reminder .big-btn {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.leech-badge {
+  font-size: 0.7em;
+  margin-left: 2px;
 }
 
 /* Review card */

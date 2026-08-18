@@ -9,6 +9,7 @@ let state = {
   browseFilter: "all",
   reviewLevels: null, // null = all categories; else a Set of selected categories
   reviewOrder: "shuffle", // "shuffle" | "category"
+  dailyNewLimit: 20, // cap on never-graded cards introduced per day
 };
 
 // ---------- Tone-colored pinyin ----------
@@ -55,11 +56,23 @@ function speakerIconSvg() {
   return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
 }
 
+// Chromium returns [] from getVoices() until the async "voiceschanged"
+// event fires, which can lose the very first speak() of a session if we
+// query it cold. Cache the list once it's populated and reuse it.
+let cachedVoices = [];
+if ("speechSynthesis" in window) {
+  const refreshVoices = () => {
+    cachedVoices = window.speechSynthesis.getVoices();
+  };
+  refreshVoices();
+  window.speechSynthesis.addEventListener("voiceschanged", refreshVoices);
+}
+
 function speak(text) {
   if (!text || !("speechSynthesis" in window)) return;
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = "zh-CN";
-  const voices = window.speechSynthesis.getVoices();
+  const voices = cachedVoices.length ? cachedVoices : window.speechSynthesis.getVoices();
   const zhVoice = voices.find((v) => v.lang === "zh-CN") || voices.find((v) => v.lang && v.lang.startsWith("zh"));
   if (zhVoice) utter.voice = zhVoice;
   window.speechSynthesis.cancel();
@@ -128,6 +141,8 @@ function updateActiveTab() {
 function showToast(msg) {
   const el = document.createElement("div");
   el.className = "toast auto-fade";
+  el.setAttribute("role", "status");
+  el.setAttribute("aria-live", "polite");
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 2000);
@@ -144,6 +159,8 @@ function showUndoToast(label, onUndo) {
 
   const el = document.createElement("div");
   el.className = "toast toast-undo";
+  el.setAttribute("role", "status");
+  el.setAttribute("aria-live", "polite");
   el.innerHTML = `<span></span><button class="undo-btn">Undo</button>`;
   el.querySelector("span").textContent = label;
   document.body.appendChild(el);
@@ -237,6 +254,9 @@ function loadReviewPrefs() {
     const parsed = JSON.parse(raw);
     state.reviewLevels = Array.isArray(parsed.levels) ? new Set(parsed.levels) : null;
     state.reviewOrder = parsed.order === "category" ? "category" : "shuffle";
+    if (typeof parsed.dailyNewLimit === "number" && Number.isFinite(parsed.dailyNewLimit) && parsed.dailyNewLimit >= 0) {
+      state.dailyNewLimit = parsed.dailyNewLimit;
+    }
   } catch (e) {
     // ignore malformed prefs, keep defaults
   }
@@ -248,8 +268,15 @@ function saveReviewPrefs() {
     JSON.stringify({
       levels: state.reviewLevels ? [...state.reviewLevels] : null,
       order: state.reviewOrder,
+      dailyNewLimit: state.dailyNewLimit,
     })
   );
+}
+
+function setDailyNewLimit(limit) {
+  state.dailyNewLimit = limit;
+  saveReviewPrefs();
+  render();
 }
 
 function toggleReviewLevel(level) {
@@ -279,12 +306,33 @@ function filteredDueCards() {
   return due.filter((c) => state.reviewLevels.has(cardCategory(c)));
 }
 
-function buildReviewQueue() {
+function newCardsIntroducedToday() {
+  const todayKey = new Date().toISOString().slice(0, 10);
+  return Store.all().filter((c) => c.introducedAt && c.introducedAt.slice(0, 10) === todayKey).length;
+}
+
+// Splits the current due set into cards that have been reviewed before
+// (always shown in full — the scheduler already decided they're due)
+// and cards that have never been graded, capping the latter at
+// dailyNewLimit minus whatever's already been introduced today. Without
+// this, a fresh deck (or a big import) would dump its entire backlog of
+// unseen cards into one overwhelming session on day one.
+function sessionCards() {
   const due = filteredDueCards();
-  if (state.reviewOrder !== "category") return shuffle(due);
+  const reviewCards = due.filter((c) => !SRS.isNew(c));
+  const newCards = due.filter((c) => SRS.isNew(c));
+  const remainingNewSlots = Math.max(0, state.dailyNewLimit - newCardsIntroducedToday());
+  const cappedNew = newCards.slice(0, remainingNewSlots);
+  return { reviewCards, newCards: cappedNew, newAvailable: newCards.length, newIncluded: cappedNew.length };
+}
+
+function buildReviewQueue() {
+  const { reviewCards, newCards } = sessionCards();
+  const combined = [...reviewCards, ...newCards];
+  if (state.reviewOrder !== "category") return shuffle(combined);
 
   const groups = {};
-  due.forEach((c) => {
+  combined.forEach((c) => {
     const cat = cardCategory(c);
     (groups[cat] = groups[cat] || []).push(c);
   });
@@ -297,8 +345,10 @@ function buildReviewQueue() {
 function renderHome() {
   const all = Store.all();
   const due = Store.dueCards();
-  const filteredDue = filteredDueCards();
   const categories = Store.categories();
+  const { reviewCards, newCards, newAvailable, newIncluded } = sessionCards();
+  const sessionSize = reviewCards.length + newCards.length;
+  const cappedNewCount = newAvailable - newIncluded;
 
   const chips = ["ALL", ...categories]
     .map((cat) => {
@@ -322,9 +372,22 @@ function renderHome() {
       <button class="seg${state.reviewOrder === "category" ? " active" : ""}" data-order="category">By category</button>
     </div>
 
-    <button class="big-btn" id="start-review" ${filteredDue.length === 0 ? "disabled" : ""}>
-      ${filteredDue.length === 0 ? "Nothing due in this selection" : `Review ${filteredDue.length} card${filteredDue.length === 1 ? "" : "s"}`}
+    <div class="new-limit-row">
+      <label for="new-limit">New cards per day</label>
+      <select id="new-limit">
+        ${[10, 20, 30, 50, 9999]
+          .map(
+            (n) =>
+              `<option value="${n}"${state.dailyNewLimit === n ? " selected" : ""}>${n === 9999 ? "No limit" : n}</option>`
+          )
+          .join("")}
+      </select>
+    </div>
+
+    <button class="big-btn" id="start-review" ${sessionSize === 0 ? "disabled" : ""}>
+      ${sessionSize === 0 ? "Nothing due in this selection" : `Review ${sessionSize} card${sessionSize === 1 ? "" : "s"}`}
     </button>
+    ${cappedNewCount > 0 ? `<div class="new-limit-note">${cappedNewCount} more new card${cappedNewCount === 1 ? "" : "s"} waiting — raise today's limit above to see them sooner.</div>` : ""}
     <button class="big-btn secondary" id="go-browse">Browse all cards</button>
     <button class="big-btn secondary" id="go-add">Add a character</button>
   `;
@@ -335,9 +398,12 @@ function renderHome() {
   document.querySelectorAll(".order-toggle .seg").forEach((btn) => {
     btn.addEventListener("click", () => setReviewOrder(btn.dataset.order));
   });
+  document.getElementById("new-limit").addEventListener("change", (e) => {
+    setDailyNewLimit(Number(e.target.value));
+  });
 
   document.getElementById("start-review").addEventListener("click", () => {
-    if (filteredDue.length === 0) return;
+    if (sessionSize === 0) return;
     setView("review");
   });
   document.getElementById("go-browse").addEventListener("click", () => setView("browse"));
@@ -409,7 +475,7 @@ function dishImageHtml(card) {
   if (!card.img) return "";
   return `
     <div class="dish-image">
-      <img src="icons/dishes/${card.img}.jpg" alt="${escapeHtml(card.hanzi)}" loading="lazy" />
+      <img src="icons/dishes/${escapeHtml(card.img)}.jpg" alt="${escapeHtml(card.hanzi)}" loading="lazy" />
       <div class="dish-image-credit">Photo: Wikimedia Commons</div>
     </div>
   `;
@@ -449,6 +515,7 @@ function applyGrade(card, session, grade) {
     reps: card.reps,
     lapses: card.lapses,
     dueDate: card.dueDate,
+    introducedAt: card.introducedAt,
   };
   const queueIdsBefore = session.queue.map((c) => c.id);
 
@@ -539,9 +606,11 @@ function renderBrowse() {
   const all = [...Store.all()].sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
   const levels = Store.levels();
 
-  const chips = ["all", ...levels]
+  const leechCount = all.filter((c) => SRS.isLeech(c)).length;
+
+  const chips = ["all", ...(leechCount > 0 ? ["leeches"] : []), ...levels]
     .map((lvl) => {
-      const label = lvl === "all" ? "All" : lvl;
+      const label = lvl === "all" ? "All" : lvl === "leeches" ? `Leeches (${leechCount})` : lvl;
       const active = state.browseFilter === lvl ? " active" : "";
       return `<button class="chip${active}" data-level="${escapeHtml(lvl)}">${escapeHtml(label)}</button>`;
     })
@@ -572,7 +641,12 @@ function renderBrowse() {
 
   function renderList(filter) {
     const f = (filter || "").trim().toLowerCase();
-    let filtered = state.browseFilter === "all" ? all : all.filter((c) => c.level === state.browseFilter);
+    let filtered =
+      state.browseFilter === "all"
+        ? all
+        : state.browseFilter === "leeches"
+        ? all.filter((c) => SRS.isLeech(c))
+        : all.filter((c) => c.level === state.browseFilter);
     if (f) {
       filtered = filtered.filter(
         (c) =>
@@ -595,7 +669,7 @@ function renderBrowse() {
         const dueLabel = dueNow ? "due now" : `due ${due.toLocaleDateString()}`;
         return `
           <div class="card-list-item" data-id="${c.id}">
-            <div class="ci-hanzi">${escapeHtml(c.hanzi)}</div>
+            <div class="ci-hanzi">${escapeHtml(c.hanzi)}${SRS.isLeech(c) ? '<span class="leech-badge" title="Keeps coming back as \'Again\' — consider rewriting or splitting this card">🔥</span>' : ""}</div>
             <div class="ci-mid">
               <div class="ci-pinyin">${tonedPinyinHtml(c.pinyin)}</div>
               <div class="ci-def">${escapeHtml(c.definition)}</div>
@@ -646,9 +720,35 @@ function downloadBlob(content, mime, filename) {
   URL.revokeObjectURL(url);
 }
 
+// ---------- Backup reminder ----------
+// This app is localStorage-only: no cloud sync, no server. A cleared
+// browser profile or an iOS storage eviction silently wipes months of
+// review progress with no way back except a JSON export the user made
+// themselves. Track the last export so Stats can nudge before that
+// happens rather than only after.
+
+const LAST_EXPORT_KEY = "hanzi-last-export-v1";
+const BACKUP_REMINDER_DAYS = 14;
+
+function recordExport() {
+  try {
+    localStorage.setItem(LAST_EXPORT_KEY, new Date().toISOString());
+  } catch (e) {
+    // best-effort only; exportJson() already succeeded regardless
+  }
+}
+
+function daysSinceLastExport() {
+  const raw = localStorage.getItem(LAST_EXPORT_KEY);
+  if (!raw) return Infinity;
+  const t = new Date(raw).getTime();
+  return Number.isFinite(t) ? (Date.now() - t) / 86400000 : Infinity;
+}
+
 function exportJson() {
   const stamp = new Date().toISOString().slice(0, 10);
   downloadBlob(JSON.stringify(Store.all(), null, 2), "application/json", `hanzi-backup-${stamp}.json`);
+  recordExport();
   showToast("Exported JSON backup");
 }
 
@@ -776,8 +876,9 @@ function renderAdd() {
       return;
     }
 
-    Store.add(hanzi, pinyin, definition, level);
-    showToast(`Added ${hanzi}`);
+    const { duplicate } = Store.add(hanzi, pinyin, definition, level);
+    showToast(duplicate ? `${hanzi} (${pinyin}) is already in your deck` : `Added ${hanzi}`);
+    if (duplicate) return;
     document.getElementById("f-hanzi").value = "";
     document.getElementById("f-pinyin").value = "";
     document.getElementById("f-def").value = "";
@@ -849,6 +950,8 @@ function renderStats() {
   const streak = currentStreak();
   const accuracy = computeAccuracy();
   const cells = buildHeatmapCells(12);
+  const daysSinceBackup = daysSinceLastExport();
+  const showBackupReminder = history.length > 0 && daysSinceBackup > BACKUP_REMINDER_DAYS;
 
   const heatmapHtml = cells
     .map((c) =>
@@ -860,6 +963,14 @@ function renderStats() {
 
   appEl.innerHTML = `
     <h2>Stats</h2>
+    ${
+      showBackupReminder
+        ? `<div class="backup-reminder">
+            <div>${Number.isFinite(daysSinceBackup) ? `You haven't backed up in ${Math.floor(daysSinceBackup)} days.` : "You've never exported a backup."} This app only stores data on this device — export a JSON backup to avoid losing your progress.</div>
+            <button class="big-btn small" id="backup-now">Export JSON backup</button>
+          </div>`
+        : ""
+    }
     <div class="stat-grid">
       <div class="stat-card"><div class="num">${streak}</div><div class="label">Day streak</div></div>
       <div class="stat-card"><div class="num">${accuracy === null ? "—" : accuracy + "%"}</div><div class="label">Retention</div></div>
@@ -880,6 +991,13 @@ function renderStats() {
     </div>
     ${history.length === 0 ? '<div class="empty-state">Review some cards to start building stats.</div>' : ""}
   `;
+
+  if (showBackupReminder) {
+    document.getElementById("backup-now").addEventListener("click", () => {
+      exportJson();
+      render();
+    });
+  }
 }
 
 // ---------- Utils ----------
@@ -901,9 +1019,25 @@ function escapeHtml(str) {
 
 // ---------- Boot ----------
 
+window.addEventListener("hanzi-storage-error", () => {
+  showToast("Couldn't save — storage is full or unavailable");
+});
+
+// Supports manifest.json home-screen shortcuts (e.g. "?view=review") that
+// should land directly on a tab instead of always opening on Home.
+function applyStartView() {
+  const requested = new URLSearchParams(window.location.search).get("view");
+  const validViews = ["home", "review", "browse", "add", "stats"];
+  if (requested && validViews.includes(requested)) {
+    state.view = requested;
+    history.replaceState(null, "", window.location.pathname);
+  }
+}
+
 initTheme();
 loadReviewPrefs();
 Store.load();
+applyStartView();
 render();
 loadChinaMap();
 

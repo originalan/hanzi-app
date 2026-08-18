@@ -1,4 +1,4 @@
-const CACHE_NAME = "hanzi-srs-v13";
+const CACHE_NAME = "hanzi-srs-v15";
 const ASSETS = [
   "./",
   "./index.html",
@@ -82,7 +82,7 @@ self.addEventListener("fetch", (event) => {
           }
           return res;
         })
-        .catch(() => cached);
+        .catch(() => cached || new Response("Offline", { status: 503, statusText: "Offline" }));
       return cached || network;
     })
   );

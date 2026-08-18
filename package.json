@@ -1,0 +1,8 @@
+{
+  "name": "hanzi-srs",
+  "private": true,
+  "description": "Spaced-repetition practice for Chinese characters, pinyin, and definitions.",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
