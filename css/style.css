@@ -70,6 +70,8 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+button:not(:disabled) { cursor: pointer; }
+
 html, body {
   height: 100%;
   margin: 0;
@@ -132,6 +134,11 @@ body {
 #app {
   flex: 1 1 auto;
   overflow-y: auto;
+  /* Contained (not just the html/body "none" above) so scrolling this
+     pane to its end doesn't chain up into a rubber-band bounce of the
+     outer page on iOS Safari -- #app is the element that actually
+     scrolls, so it's the one that needs to stop the chain. */
+  overscroll-behavior-y: contain;
   padding: 16px;
   padding-bottom: calc(90px + var(--safe-bottom));
 }
@@ -149,15 +156,51 @@ body {
 }
 
 /* This is a mobile-first layout, but it also runs in a plain desktop
-   browser tab (as a PWA or not). Past ~600px, cap the app shell to a
-   phone-width column instead of letting text and lists stretch edge to
-   edge across a wide window. */
+   browser tab too. Past ~600px, present it as a self-contained
+   phone-width app frame -- its own border, shadow, and rounded corners
+   against a muted surround -- rather than letting the mobile layout
+   float loose (or worse, have its fixed tab bar pin to the literal
+   edge of a wide browser window while the rest of the UI sits centered
+   in a narrow column).
+   The tab bar switches from a fixed overlay (needed on a real phone so
+   it stays put while #app scrolls under it) to an ordinary flex child,
+   so it lands at the frame's bottom edge instead of the viewport's. */
 @media (min-width: 600px) {
-  .topbar, #app, .tabbar {
-    max-width: 480px;
-    margin-left: auto;
-    margin-right: auto;
+  html {
+    background: var(--surface-2);
   }
+
+  body {
+    max-width: 480px;
+    height: calc(100dvh - 64px);
+    min-height: calc(100dvh - 64px);
+    margin: 32px auto;
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
+    overflow: hidden;
+    /* Establishes a containing block for position:fixed descendants
+       (toasts) so they anchor to this frame instead of escaping to the
+       true browser viewport once the frame no longer fills it. */
+    contain: layout;
+  }
+
+  #app {
+    padding-bottom: 16px;
+  }
+
+  .tabbar {
+    position: static;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .big-btn:not(:disabled):hover { filter: brightness(1.08); }
+  .chip:hover { border-color: var(--accent); }
+  .grade-btn:hover { filter: brightness(1.08); }
+  .tab:hover { color: var(--text); }
+  .seg:hover { color: var(--text); }
+  .speak-btn:hover, .icon-btn:hover { background: var(--surface-2); }
 }
 
 .tab {
